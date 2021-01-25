@@ -26,6 +26,7 @@ export class ObjectDetectionDrawer {
   static OD_TYPE_RECT = 1;
   static OD_TYPE_POLYGON = 2;
   static EMPTY_AREA_COLOR = '#00000002';
+  static LABEL_HEIGHT = 20;
 
   // Private Member Variables
   _stage = undefined;
@@ -66,8 +67,75 @@ export class ObjectDetectionDrawer {
 
   _removeShapesInStage(shapes) {
     this._stage.removeChild(shapes.tagArea);
-    this._stage.removeChild(shapes.labelArea);
+    this._stage.removeChild(shapes.labelBackground);
     this._stage.removeChild(shapes.labelText);
+  }
+
+  /**
+   * Calculates where label position will be
+   * @param {number[] | [x,y][]} pos Positions
+   * @returns {[x, y]}
+   */
+  _calcLabelPos(pos) {
+    let labelPos = [];
+
+    if (this._type === ObjectDetectionDrawer.OD_TYPE_RECT) {
+      labelPos = [pos[0], pos[1] - ObjectDetectionDrawer.LABEL_HEIGHT];
+    } else {
+      labelPos = pos.reduce((l, r) => {
+        let minX = (minY = 0);
+
+        if (l[0] < r[0]) minX = l[0];
+        else minX = r[0];
+        if (l[1] < r[1]) minY = l[1];
+        else minY = r[1];
+
+        return [minX, minY];
+      });
+      labelPos[1] -= ObjectDetectionDrawer.LABEL_HEIGHT;
+    }
+
+    return labelPos;
+  }
+
+  /**
+   * Creates createjs.Text
+   * @param {string} labelText Label Text
+   * @param {[x, y]} pos [x, y]
+   * @returns {createjs.Text}
+   */
+  _createLabelText(labelText, pos) {
+    let newLabelText = ' ';
+    if (labelText.trim().length !== 0) newLabelText = labelText;
+    const text = new createjs.Text(newLabelText, '12px Arial', '#ffffff');
+    text.x = pos[0] + 4;
+    text.y = pos[1] + 4;
+    return text;
+  }
+
+  /**
+   * Creates createjs.Shape
+   * @param {createjs.Text} text
+   * @param {[x, y]} pos [x, y]
+   * @returns {createjs.Shape}
+   */
+  _createLabelBackground(text, pos) {
+    const labelBackground = new createjs.Shape();
+    const { width: textWidth } = text.getBounds();
+    labelBackground.graphics
+      .beginFill('#000')
+      .drawRect(
+        pos[0],
+        pos[1],
+        textWidth + 8,
+        ObjectDetectionDrawer.LABEL_HEIGHT
+      );
+
+    return labelBackground;
+  }
+
+  _createLabelShapes(labelText, pos) {
+    return this._createLabelText(labelText);
   }
 
   /**
@@ -131,11 +199,11 @@ export class ObjectDetectionDrawer {
 
   /**
    * Sets label visible
+   * @param {boolean} visible
    * @param {number | data} paramA Data Index or Data
    * @param {Shapes} paramB Shapes (Optional)
-   * @param {boolean} visible
    */
-  setLabelVisible(paramA, paramB, visible) {
+  setLabelVisible(visible, paramA, paramB) {
     let data = undefined;
     let shapes = undefined;
 
@@ -146,24 +214,63 @@ export class ObjectDetectionDrawer {
       data = this._dataList[paramA];
       shapes = this._shapesList[paramA];
     }
+
+    if (visible) {
+      this._stage.addChild(shapes.labelBackground);
+      this._stage.addChild(shapes.labelText);
+    } else {
+      this._stage.removeChild(shapes.labelBackground);
+      this._stage.removeChild(shapes.labelText);
+    }
+  }
+
+  /**
+   * Sets label text
+   * @param {string} label Label Text
+   * @param {number | data} paramA Data Index or Data
+   * @param {Shapes} paramB Shapes (Optional)
+   */
+  setLabelText(label, paramA, paramB) {
+    let data = undefined;
+    let shapes = undefined;
+
+    if (paramB !== undefined) {
+      data = paramA;
+      shapes = paramB;
+    } else {
+      data = this._dataList[paramA];
+      shapes = this._shapesList[paramA];
+    }
+
+    // Removes label text and label shape
+    this._stage.removeChild(shapes.labelText);
+    this._stage.removeChild(shapes.labelBackground);
+
+    // Re-create label text and label shape
+    const labelPos = this._calcLabelPos(data.pos);
+    shapes.labelText = this._createLabelText(label, labelPos);
+    shapes.labelBackground = this._createLabelBackground(
+      shapes.labelText,
+      labelPos
+    );
+
+    // Add them to children of the stage
+    this._stage.addChild(shapes.labelBackground);
+    this._stage.addChild(shapes.labelText);
   }
 
   /**
    * Appends data to the data list.
    * @param {number[] | [x, y][]} pos Positions
    * @param {string} color Hex RGB string, ('#000000', '#ffbbaa' ...)
+   * @param {string} label Label Text
    */
-  appendData(pos, color) {
+  appendData(pos, color, label = '') {
     const newData = { pos, color, isFilled: false };
     const newShapes = {};
-    const LABEL_HEIGHT = 30;
 
-    // Create Shapes
+    // Create tag area shape
     newShapes.tagArea = new createjs.Shape();
-    newShapes.labelArea = new createjs.Shape();
-    newShapes.labelText = new createjs.Text('TEST', '12px Arial', '#ffffff');
-
-    let labelPos = undefined;
 
     // Draw TagArea
     if (this._type === ObjectDetectionDrawer.OD_TYPE_RECT) {
@@ -172,26 +279,12 @@ export class ObjectDetectionDrawer {
         .beginStroke(color)
         .beginFill(ObjectDetectionDrawer.EMPTY_AREA_COLOR) // Without it mouse events wouldn't work
         .drawRect(pos[0], pos[1], pos[2] - pos[0], pos[3] - pos[1]);
-      labelPos = [pos[0], pos[1] - LABEL_HEIGHT];
     } else {
       newShapes.tagArea.graphics
         .setStrokeStyle(2)
         .beginStroke(color)
         .beginFill(ObjectDetectionDrawer.EMPTY_AREA_COLOR) // Without it mouse events wouldn't work
         .drawPolygon(pos);
-
-      // Find the top of the left of the area
-      labelPos = pos.reduce((l, r) => {
-        let minX = (minY = 0);
-
-        if (l[0] < r[0]) minX = l[0];
-        else minX = r[0];
-        if (l[1] < r[1]) minY = l[1];
-        else minY = r[1];
-
-        return [minX, minY];
-      });
-      labelPos[1] -= LABEL_HEIGHT;
     }
 
     // Attaches mouse events to the shape
@@ -213,20 +306,20 @@ export class ObjectDetectionDrawer {
       this._stage.update();
     });
 
-    // Draw Label
-    console.dir(newShapes.labelText);
-    newShapes.labelArea.graphics
-      .beginFill('#000')
-      .drawRect(labelPos[0], labelPos[1], 100, LABEL_HEIGHT);
-    newShapes.labelText.x = labelPos[0];
-    newShapes.labelText.y = labelPos[1];
+    // Creates Label and LabelBackground
+    const labelPos = this._calcLabelPos(pos);
+    newShapes.labelText = this._createLabelText(label, labelPos);
+    newShapes.labelBackground = this._createLabelBackground(
+      newShapes.labelText,
+      labelPos
+    );
 
-    // Add the shapes to the stage
+    // Adds the shapes to the stage
     this._stage.addChild(newShapes.tagArea);
-    this._stage.addChild(newShapes.labelArea);
+    this._stage.addChild(newShapes.labelBackground);
     this._stage.addChild(newShapes.labelText);
 
-    // Add data to lists
+    // Adds data to lists
     this._dataList.push(newData);
     this._shapesList.push(newShapes);
   }
