@@ -90,7 +90,8 @@ function polygonDemoCode() {
 function rectDemoCode() {
   const odDrawer = new ObjectDetectionDrawer(
     'demo',
-    ObjectDetectionDrawer.OD_TYPE_RECT
+    ObjectDetectionDrawer.OD_TYPE_RECT,
+    './res/sample.jpg'
   );
 
   for (const data of rectTaggedData) {
@@ -102,6 +103,14 @@ function rectDemoCode() {
   //   odDrawer.update();
   // }, 1000);
   odDrawer.update();
+
+  document.getElementById('btnExpand').addEventListener('click', () => {
+    odDrawer.expandCanvasScale(0.25);
+  });
+
+  document.getElementById('btnReduce').addEventListener('click', () => {
+    odDrawer.reduceCanvasScale(0.25);
+  });
 }
 
 function demoCode() {

@@ -1,5 +1,4 @@
 import * as createjs from '@createjs/easeljs';
-import { collapseTextChangeRangesAcrossMultipleVersions } from 'typescript';
 
 /**
  * Define drawPolygon
@@ -29,9 +28,15 @@ export class ObjectDetectionDrawer {
   static LABEL_HEIGHT = 20;
 
   // Private Member Variables
+  _canvas = undefined;
   _stage = undefined;
   _type = undefined;
+  _image = undefined;
+  _mousePos = undefined; // [x, y]
+  _movable = 0; // 0: not movable 1: ready to change movable 2: movable
   _scale = 1.0;
+  _moveStartingPoint = undefined; // undefined | [x, y]
+  _prevStagePos = undefined; // Stage position before moving
   _dataList = [];
   /**
    * Shapes
@@ -52,10 +57,13 @@ export class ObjectDetectionDrawer {
    * Constructor
    * @param {string} canvasId Canvas Element Id
    * @param {number} type OD_TYPE_RECT | OD_TYPE_POLYGON
+   * @param {string} imgPath Target Image Path
    */
-  constructor(canvasId, type) {
+  constructor(canvasId, type, imgPath) {
+    this._canvas = document.getElementById(canvasId);
     this._stage = new createjs.Stage(canvasId);
     this._type = type;
+    this._imgPath = imgPath;
 
     this._init();
   }
@@ -63,6 +71,108 @@ export class ObjectDetectionDrawer {
   /** Initialize */
   _init() {
     this._stage.enableMouseOver(10);
+    this._loadImg();
+    this._addCanvasEvents();
+  }
+
+  _loadImg() {
+    if (this._imgPath.trim().length === 0) return;
+
+    this._image = new Image();
+    this._image.src = this._imgPath;
+    this._image.onload = () => {
+      const bitmap = new createjs.Bitmap(this._image);
+      this._stage.addChild(bitmap);
+      this._stage.setChildIndex(bitmap, 0);
+      this._stage.update();
+    };
+  }
+
+  // Update Cursor depends on the _movable variable.
+  _updateMovableCursor() {
+    const currentCursor = document.body.style.cursor.replace('default', '');
+
+    switch (this._movable) {
+      case 0:
+        if (currentCursor !== '') document.body.style.cursor = '';
+        break;
+      case 1:
+        if (currentCursor === '') document.body.style.cursor = 'grab';
+        break;
+        break;
+    }
+  }
+
+  _addCanvasEvents() {
+    // Mouse Wheel Zoom Events
+    this._canvas.addEventListener('wheel', (e) => {
+      if (e.deltaY < 0) {
+        this.expandCanvasScale(0.25);
+      } else if (e.deltaY > 0) {
+        this.reduceCanvasScale(0.25);
+      }
+    });
+
+    // Mouse Events and Keyboard Events for moving canvas position
+    document.addEventListener('keydown', (e) => {
+      if (document.activeElement.tagName.toLowerCase() === 'input') return; // When input is focused, It doesn't fire
+
+      switch (e.key.toLowerCase()) {
+        case ' ':
+          if (this._movable === 0) {
+            this._movable = 1;
+
+            this._updateMovableCursor();
+          }
+          break;
+      }
+    });
+
+    // Keyboard Events for moving canvas position
+    document.addEventListener('keyup', (e) => {
+      switch (e.key.toLowerCase()) {
+        case ' ':
+          if (this._movable !== 0) {
+            this._movable = 0;
+
+            this._updateMovableCursor();
+          }
+          break;
+      }
+    });
+
+    this._canvas.addEventListener('mousedown', (e) => {
+      if (this._movable === 1) {
+        this._prevStagePos = [this._stage.x, this._stage.y];
+        this._moveStartingPoint = [e.clientX, e.clientY];
+        this._movable = 2;
+      }
+    });
+
+    this._canvas.addEventListener('mousemove', (e) => {
+      this._mousePos = [e.clientX, e.clientY];
+
+      if (this._movable === 2) {
+        const [mouseX, mouseY] = this._mousePos;
+        const [setX, setY] = [
+          mouseX - this._moveStartingPoint[0],
+          mouseY - this._moveStartingPoint[1],
+        ];
+
+        this._stage.x = this._prevStagePos[0] + setX;
+        this._stage.y = this._prevStagePos[1] + setY;
+        this.adjustPos();
+      }
+    });
+
+    window.document.addEventListener('mouseup', () => {
+      if (this._movable === 2) {
+        this._moveStartingPoint = undefined;
+        this._movable = 1;
+
+        this._updateMovableCursor();
+      }
+    });
   }
 
   _removeShapesInStage(shapes) {
@@ -136,6 +246,74 @@ export class ObjectDetectionDrawer {
 
   _createLabelShapes(labelText, pos) {
     return this._createLabelText(labelText);
+  }
+
+  /**
+   * Scales the stage. It uses mouse position(It'd be set in canvas mousemove event.) for scaling pivot.
+   * @param {number} scale Scale to set
+   */
+  setScale(scale) {
+    this._scale = scale;
+    this._stage.scaleX = scale;
+    this._stage.scaleY = scale;
+
+    const [mouseX, mouseY] = this._mousePos;
+    const [pivotX, pivotY] = [
+      mouseX / this._canvas.width,
+      mouseY / this._canvas.height,
+    ];
+    console.log(pivotX, pivotY);
+  }
+
+  /** Adjust Position related to canvas and image size */
+  adjustPos() {
+    const isImageSmallerThanCanvas =
+      this._image.width * this._scale <= this._canvas.width &&
+      this._image.height * this._scale <= this._canvas.height;
+
+    if (isImageSmallerThanCanvas) {
+      const [imageWidth, imageHeight] = [
+        this._image.width * this._scale,
+        this._image.height * this._scale,
+      ];
+
+      if (this._stage.x < 0) this._stage.x = 0;
+      if (this._stage.y < 0) this._stage.y = 0;
+      if (this._stage.x + imageWidth >= this._canvas.width)
+        this._stage.x = this._canvas.width - imageWidth;
+      if (this._stage.y + imageHeight >= this._canvas.height)
+        this._stage.y = this._canvas.height - imageHeight;
+    } else {
+      const [imageWidth, imageHeight] = [
+        this._image.width * this._scale,
+        this._image.height * this._scale,
+      ];
+
+      if (this._stage.x > 0) this._stage.x = 0;
+      if (this._stage.y > 0) this._stage.y = 0;
+      if (this._stage.x + imageWidth <= this._canvas.width)
+        this._stage.x = this._canvas.width - imageWidth;
+      if (this._stage.y + imageHeight <= this._canvas.height)
+        this._stage.y = this._canvas.height - imageHeight;
+    }
+
+    this._stage.update();
+  }
+
+  expandCanvasScale(scale) {
+    // Sets scale
+    const newScale = this._scale + scale;
+    if (newScale > 16) return;
+    this.setScale(newScale);
+    this.adjustPos();
+  }
+
+  reduceCanvasScale(scale) {
+    // Sets scale
+    const newScale = this._scale - scale;
+    if (newScale < scale) return;
+    this.setScale(newScale);
+    this.adjustPos();
   }
 
   /**
@@ -290,7 +468,7 @@ export class ObjectDetectionDrawer {
     // Attaches mouse events to the shape
     newShapes.tagArea.addEventListener('mouseover', () => {
       if (this.onShapeMouseOver) this.onShapeMouseOver(newData, newShapes);
-      if (this.cursorPointer) {
+      if (this.cursorPointer && this._movable === 0) {
         document.body.style.setProperty('cursor', 'pointer');
       }
       this.fillTagArea(newData, newShapes);
@@ -299,7 +477,7 @@ export class ObjectDetectionDrawer {
 
     newShapes.tagArea.addEventListener('mouseout', () => {
       if (this.onShapeMouseLeave) this.onShapeMouseLeave(newData, newShapes);
-      if (this.cursorPointer) {
+      if (this.cursorPointer && this._movable === 0) {
         document.body.style.setProperty('cursor', 'default');
       }
       this.unfillTagArea(newData, newShapes);
