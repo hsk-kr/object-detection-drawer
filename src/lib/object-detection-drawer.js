@@ -267,32 +267,27 @@ export class ObjectDetectionDrawer {
 
   /** Adjust Position related to canvas and image size */
   adjustPos() {
-    const isImageSmallerThanCanvas =
-      this._image.width * this._scale <= this._canvas.width &&
-      this._image.height * this._scale <= this._canvas.height;
+    const [imageWidth, imageHeight] = [
+      this._image.width * this._scale,
+      this._image.height * this._scale,
+    ];
 
-    if (isImageSmallerThanCanvas) {
-      const [imageWidth, imageHeight] = [
-        this._image.width * this._scale,
-        this._image.height * this._scale,
-      ];
-
+    if (imageWidth <= this._canvas.width) {
       if (this._stage.x < 0) this._stage.x = 0;
-      if (this._stage.y < 0) this._stage.y = 0;
       if (this._stage.x + imageWidth >= this._canvas.width)
         this._stage.x = this._canvas.width - imageWidth;
+    } else {
+      if (this._stage.x > 0) this._stage.x = 0;
+      if (this._stage.x + imageWidth <= this._canvas.width)
+        this._stage.x = this._canvas.width - imageWidth;
+    }
+
+    if (imageHeight <= this._canvas.height) {
+      if (this._stage.y < 0) this._stage.y = 0;
       if (this._stage.y + imageHeight >= this._canvas.height)
         this._stage.y = this._canvas.height - imageHeight;
     } else {
-      const [imageWidth, imageHeight] = [
-        this._image.width * this._scale,
-        this._image.height * this._scale,
-      ];
-
-      if (this._stage.x > 0) this._stage.x = 0;
       if (this._stage.y > 0) this._stage.y = 0;
-      if (this._stage.x + imageWidth <= this._canvas.width)
-        this._stage.x = this._canvas.width - imageWidth;
       if (this._stage.y + imageHeight <= this._canvas.height)
         this._stage.y = this._canvas.height - imageHeight;
     }
