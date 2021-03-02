@@ -22,16 +22,19 @@ const colorset = [
 const generateRandomColor = () =>
   colorset[parseInt(Math.random() * colorset.length)];
 
-const polygonTaggedData = [
+const taggedData = [
   {
+    type: ObjectDetectionDrawer.OD_TYPE_POLYGON,
     pos: [
       [20, 20],
       [150, 260],
       [100, 30],
     ],
     color: generateRandomColor(),
+    label: 'test A',
   },
   {
+    type: ObjectDetectionDrawer.OD_TYPE_POLYGON,
     pos: [
       [160, 140],
       [300, 180],
@@ -39,8 +42,10 @@ const polygonTaggedData = [
       [60, 70],
     ],
     color: generateRandomColor(),
+    label: 'test B',
   },
   {
+    type: ObjectDetectionDrawer.OD_TYPE_POLYGON,
     pos: [
       [440, 460],
       [500, 400],
@@ -48,54 +53,46 @@ const polygonTaggedData = [
       [500, 800],
     ],
     color: generateRandomColor(),
+    label: 'test C',
   },
-];
-
-const rectTaggedData = [
   {
+    type: ObjectDetectionDrawer.OD_TYPE_RECT,
     pos: [500, 500, 550, 550],
     color: generateRandomColor(),
+    label: 'test D',
   },
   {
+    type: ObjectDetectionDrawer.OD_TYPE_RECT,
     pos: [150, 150, 280, 290],
     color: generateRandomColor(),
+    label: 'test E',
   },
   {
+    type: ObjectDetectionDrawer.OD_TYPE_RECT,
     pos: [70, 70, 120, 120],
     color: generateRandomColor(),
+    label: 'test F',
   },
   {
+    type: ObjectDetectionDrawer.OD_TYPE_RECT,
     pos: [140, 140, 200, 200],
     color: generateRandomColor(),
+    label: 'test G',
   },
   {
+    type: ObjectDetectionDrawer.OD_TYPE_RECT,
     pos: [0, 50, 50, 100],
     color: generateRandomColor(),
+    label: 'test H',
   },
 ];
 
-function polygonDemoCode() {
-  const odDrawer = new ObjectDetectionDrawer(
-    'demo',
-    ObjectDetectionDrawer.OD_TYPE_POLYGON
-  );
+function demoCode() {
+  const odDrawer = new ObjectDetectionDrawer('demo', './res/sample.jpg');
 
-  for (const data of polygonTaggedData) {
-    odDrawer.appendData(data.pos, data.color);
-  }
-
-  odDrawer.update();
-}
-
-function rectDemoCode() {
-  const odDrawer = new ObjectDetectionDrawer(
-    'demo',
-    ObjectDetectionDrawer.OD_TYPE_RECT,
-    './res/sample.jpg'
-  );
-
-  for (const data of rectTaggedData) {
-    odDrawer.appendData(data.pos, data.color);
+  for (const data of taggedData) {
+    1;
+    odDrawer.appendData(data.type, data.pos, data.color, data.label);
   }
 
   // odDrawer.fillShape(0);
@@ -111,11 +108,6 @@ function rectDemoCode() {
   document.getElementById('btnReduce').addEventListener('click', () => {
     odDrawer.reduceCanvasScale(0.25);
   });
-}
-
-function demoCode() {
-  rectDemoCode();
-  // polygonDemoCode();
 }
 
 window.onload = () => {
