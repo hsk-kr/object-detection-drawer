@@ -1,6 +1,19 @@
 import * as createjs from '@createjs/easeljs';
 
 /**
+ * Default values of the modes
+ */
+const defaultModeInfo = {
+  srtPos: undefined, // started at [x, y]
+  movePos: undefined, // current cursor are at [x, y]
+  endPos: undefined, // ended at [x, y]
+  dragRect: undefined, // A rect shape,
+  draggedShapes: [],
+};
+
+const generateDefaultModeInfo = () => ({ ...defaultModeInfo });
+
+/**
  * Define drawPolygon
  */
 
@@ -8,11 +21,12 @@ import * as createjs from '@createjs/easeljs';
  * Draw Polygon
  * @param {[x, y][]} posList Position List
  */
-createjs.Graphics.prototype.drawPolygon = function (posList) {
-  if (posList.length === 0) return this;
-  const firstPos = posList.splice(0, 1)[0];
+createjs.Graphics.prototype.drawPolygon = function (...posList) {
+  const copyPosList = [...posList];
+  if (copyPosList.length === 0) return this;
+  const firstPos = copyPosList.splice(0, 1)[0];
   let chain = this.moveTo(firstPos[0], firstPos[1]);
-  for (const pos of posList) chain = chain.lineTo(pos[0], pos[1]);
+  for (const pos of copyPosList) chain = chain.lineTo(pos[0], pos[1]);
   return chain.lineTo(firstPos[0], firstPos[1]);
 };
 
@@ -21,22 +35,30 @@ createjs.Graphics.prototype.drawPolygon = function (posList) {
  */
 
 export class ObjectDetectionDrawer {
-  // ObjectDetectionDrawer Render Types
+  // ObjectDetectionDrawer Rendering Types
   static OD_TYPE_RECT = 1;
   static OD_TYPE_POLYGON = 2;
+  // ObjectDetectionDrawer Type
+  static OD_MODE_DEFAULT = 1;
+  // Constants
   static EMPTY_AREA_COLOR = '#00000002';
+  static DEFAULT_MODE_LINE_COLOR = '#ffffff';
   static LABEL_HEIGHT = 20;
 
   // Private Member Variables
   _canvas = undefined;
   _stage = undefined;
   _image = undefined;
+  _mode = undefined; // It uses for canvas mouse events. like drawing a shape, drag and select shapes.
   _mousePos = undefined; // [x, y]
   _movable = 0; // 0: not movable 1: ready to change movable 2: movable
   _scale = 1.0;
   _moveStartingPoint = undefined; // undefined | [x, y]
   _prevStagePos = undefined; // Stage position before moving
+  _defaultModeInfo = generateDefaultModeInfo(); // Data of default mode. It has to be changed when the mode is changed.
   _dataList = [];
+  _preventGlobalMouseEvent = false; // It uses for preventing global mouse events
+
   /**
    * Shapes
    * {
@@ -48,9 +70,19 @@ export class ObjectDetectionDrawer {
   // Public Member Variables
   cursorPointer = true; // Whather change the cursor to the pointer or not when cursor on shapes.
 
-  // Events
+  /**
+    Callback Events
+  */
   onShapeMouseOver = (data, shapes) => {};
   onShapeMouseOut = (data, shapes) => {};
+  onShapeClick = (data, shapes) => {};
+
+  /**
+   * It fires when dragging ended on the default mode.
+   * you can remove a rag box by calling the remove function.
+   * @param {{ srtPos: [x, y], movePos: [x, y], endPos: [x, y], dragRect: Shape, draggedShapes: [], clear: () => void) }} e e: { srtPos: [x, y], movePos: [x, y], endPos: [x, y], dragRect: Shape, clear: () => void) }
+   */
+  onDefaultDraggingEnd = (e) => {};
 
   /**
    * Constructor
@@ -70,6 +102,8 @@ export class ObjectDetectionDrawer {
     this._stage.enableMouseOver(10);
     this._loadImg();
     this._addCanvasEvents();
+
+    this._mode = ObjectDetectionDrawer.OD_MODE_DEFAULT;
   }
 
   _loadImg() {
@@ -96,11 +130,43 @@ export class ObjectDetectionDrawer {
       case 1:
         if (currentCursor === '') document.body.style.cursor = 'grab';
         break;
-        break;
     }
   }
 
+  /**
+   * Attach Events to the canvas and window.
+   */
   _addCanvasEvents() {
+    // Helpers
+
+    // Dragging End Event
+    const endDragging = (mouseX, mouseY) => {
+      switch (this._mode) {
+        case ObjectDetectionDrawer.OD_MODE_DEFAULT:
+          if (this._defaultModeInfo.srtPos === undefined) return;
+
+          this._defaultModeInfo.endPos = [mouseX, mouseY];
+          this.onDefaultDraggingEnd({
+            ...this._defaultModeInfo,
+            clear: this._clearDefaultModeInfo.bind(this),
+          });
+          break;
+        default:
+          break;
+      }
+    };
+
+    /** Calculates mouse position proportional to the stage scale and position. */
+    const calcMosePos = (e) => {
+      let xToSet = e.rawX - this._stage.x;
+      let yToSet = e.rawY - this._stage.y;
+
+      xToSet = xToSet / this._stage.scale;
+      yToSet = yToSet / this._stage.scale;
+
+      return [xToSet, yToSet];
+    };
+
     // Mouse Wheel Zoom Events
     this._canvas.addEventListener('wheel', (e) => {
       if (e.deltaY < 0) {
@@ -131,26 +197,111 @@ export class ObjectDetectionDrawer {
         case ' ':
           if (this._movable !== 0) {
             this._movable = 0;
-
             this._updateMovableCursor();
           }
           break;
       }
     });
 
+    this._stage.on('stagemousedown', (e) => {
+      const [mouseX, mouseY] = calcMosePos(e);
+
+      // Do something depends on the mode
+      switch (this._mode) {
+        case ObjectDetectionDrawer.OD_MODE_DEFAULT:
+          this._defaultModeInfo.srtPos = [mouseX, mouseY]; // Save a starting point
+          this._defaultModeInfo.dragRect = this._createDefaultModeDragRect(
+            this._defaultModeInfo.srtPos
+          ); // Create a rect
+          this._stage.addChild(this._defaultModeInfo.dragRect);
+          break;
+        default:
+          break;
+      }
+    });
+
+    this._stage.on('stagemousemove', (e) => {
+      if (this._preventGlobalMouseEvent) {
+        this._preventGlobalMouseEvent = false;
+        this._clearDefaultModeInfo();
+        return;
+      } // When mouse is clicked on a shape, It makes the event ended.
+
+      const [mouseX, mouseY] = calcMosePos(e);
+
+      // Do something depends on the mode
+      switch (this._mode) {
+        case ObjectDetectionDrawer.OD_MODE_DEFAULT:
+          if (
+            this._defaultModeInfo.srtPos === undefined ||
+            this._defaultModeInfo.dragRect === undefined ||
+            this._defaultModeInfo.endPos !== undefined
+          )
+            return;
+
+          // Resize A Drawing Rectangle
+          this._defaultModeInfo.movePos = [mouseX, mouseY];
+          {
+            let x, y, w, h;
+
+            if (mouseX > this._defaultModeInfo.srtPos[0]) {
+              x = this._defaultModeInfo.srtPos[0];
+              w = mouseX - x;
+            } else {
+              x = mouseX;
+              w = this._defaultModeInfo.srtPos[0] - x;
+            }
+
+            if (mouseY > this._defaultModeInfo.srtPos[1]) {
+              y = this._defaultModeInfo.srtPos[1];
+              h = mouseY - y;
+            } else {
+              y = mouseY;
+              h = this._defaultModeInfo.srtPos[1] - y;
+            }
+
+            this._defaultModeInfo.dragRect.graphics.command.x = x;
+            this._defaultModeInfo.dragRect.graphics.command.y = y;
+            this._defaultModeInfo.dragRect.graphics.command.w = w;
+            this._defaultModeInfo.dragRect.graphics.command.h = h;
+          }
+
+          this.update();
+          break;
+        default:
+          break;
+      }
+    });
+
+    this._stage.on('stagemouseup', (e) => {
+      const [mouseX, mouseY] = calcMosePos(e);
+      endDragging(mouseX, mouseY);
+    });
+
+    this._stage.on('stagemouseout', (e) => {
+      const [mouseX, mouseY] = calcMosePos(e);
+      endDragging(mouseX, mouseY);
+    });
+
     this._canvas.addEventListener('mousedown', (e) => {
+      const { x: canvasX, y: canvasY } = this._canvas.getBoundingClientRect();
+      const [mouseX, mouseY] = [e.clientX - canvasX, e.clientY - canvasY];
+
+      // The image repositioning
       if (this._movable === 1) {
         this._prevStagePos = [this._stage.x, this._stage.y];
-        this._moveStartingPoint = [e.clientX, e.clientY];
+        this._moveStartingPoint = [mouseX, mouseY];
         this._movable = 2;
       }
     });
 
     this._canvas.addEventListener('mousemove', (e) => {
-      this._mousePos = [e.clientX, e.clientY];
+      // The image repositioning
+      const { x: canvasX, y: canvasY } = this._canvas.getBoundingClientRect();
+      this._mousePos = [e.clientX - canvasX, e.clientY - canvasY];
+      const [mouseX, mouseY] = this._mousePos;
 
       if (this._movable === 2) {
-        const [mouseX, mouseY] = this._mousePos;
         const [setX, setY] = [
           mouseX - this._moveStartingPoint[0],
           mouseY - this._moveStartingPoint[1],
@@ -162,7 +313,8 @@ export class ObjectDetectionDrawer {
       }
     });
 
-    window.document.addEventListener('mouseup', () => {
+    window.document.addEventListener('mouseup', (e) => {
+      // The image repositioning
       if (this._movable === 2) {
         this._moveStartingPoint = undefined;
         this._movable = 1;
@@ -172,6 +324,19 @@ export class ObjectDetectionDrawer {
     });
   }
 
+  /** Re-init this._defaultModeInfo */
+  _clearDefaultModeInfo() {
+    if (this._defaultModeInfo.dragRect !== undefined) {
+      this._stage.removeChild(this._defaultModeInfo.dragRect);
+      this.update();
+    }
+    this._defaultModeInfo = generateDefaultModeInfo();
+  }
+
+  /**
+   * Removes the shapes in the stage.
+   * @param {any} shapes A Shape
+   */
   _removeShapesInStage(shapes) {
     this._stage.removeChild(shapes.tagArea);
     this._stage.removeChild(shapes.labelBackground);
@@ -211,7 +376,7 @@ export class ObjectDetectionDrawer {
    * Creates createjs.Text
    * @param {string} labelText Label Text
    * @param {[x, y]} pos [x, y]
-   * @returns {createjs.Text}
+   * @returns {createjs.Text} createjs.Text
    */
   _createLabelText(labelText, pos) {
     let newLabelText = ' ';
@@ -226,7 +391,7 @@ export class ObjectDetectionDrawer {
    * Creates createjs.Shape
    * @param {createjs.Text} text
    * @param {[x, y]} pos [x, y]
-   * @returns {createjs.Shape}
+   * returns {createjs.Shape} createjs.Shape
    */
   _createLabelBackground(text, pos) {
     const labelBackground = new createjs.Shape();
@@ -243,8 +408,89 @@ export class ObjectDetectionDrawer {
     return labelBackground;
   }
 
+  _createPointShapes(posList) {
+    const type = typeof posList[0] === 'object' ? 'polygon' : 'rect';
+    const pointShapes = [];
+
+    if (type === 'polygon') {
+      for (const pos of posList) {
+        const point = new createjs.Shape();
+        point.graphics.beginFill('#000').drawCircle(pos[0], pos[1], 5);
+        pointShapes.push(point);
+      }
+    } else {
+      console.log(posList);
+      const ltPoint = new createjs.Shape();
+      const rtPoint = new createjs.Shape();
+      const lbPoint = new createjs.Shape();
+      const rbPoint = new createjs.Shape();
+
+      ltPoint.graphics
+        .beginStroke('#000')
+        .setStrokeStyle(2)
+        .beginFill('#fff')
+        .drawCircle(posList[0], posList[1], 5);
+      lbPoint.graphics
+        .beginStroke('#000')
+        .setStrokeStyle(2)
+        .beginFill('#fff')
+        .drawCircle(posList[2], posList[1], 5);
+      rtPoint.graphics
+        .beginStroke('#000')
+        .setStrokeStyle(2)
+        .beginFill('#fff')
+        .drawCircle(posList[0], posList[3], 5);
+      rbPoint.graphics
+        .beginStroke('#000')
+        .setStrokeStyle(2)
+        .beginFill('#fff')
+        .drawCircle(posList[2], posList[3], 5);
+
+      pointShapes.push(ltPoint);
+      pointShapes.push(rtPoint);
+      pointShapes.push(lbPoint);
+      pointShapes.push(rbPoint);
+    }
+
+    // Attach events to the points.
+    for (const point of pointShapes) {
+      point.on('mouseover', () => {
+        document.body.style.cursor = 'move';
+      });
+
+      point.on('mouseout', () => {
+        document.body.style.cursor = document.body.style.cursor.replace(
+          'move',
+          ''
+        );
+      });
+
+      point.on('mousedown', () => {
+        this._preventGlobalMouseEvent = true;
+      });
+    }
+
+    return pointShapes;
+  }
+
   _createLabelShapes(labelText, pos) {
-    return this._createLabelText(labelText);
+    return this._createLabelText(labelText, pos);
+  }
+
+  /**
+   * Creates a rectangle that drawn by mouse drag. (on default mode)
+   * It returns null if the srtPos format is incorrect.
+   * @parma srtPos {[number, number]}
+   */
+  _createDefaultModeDragRect(srtPos) {
+    if (srtPos?.length !== 2) return;
+    const dragRect = new createjs.Shape();
+    dragRect.graphics
+      .setStrokeStyle(2)
+      .beginStroke(ObjectDetectionDrawer.DEFAULT_MODE_LINE_COLOR)
+      .beginFill(ObjectDetectionDrawer.EMPTY_AREA_COLOR) // Without it the mouse events wouldn't work
+      .drawRect(srtPos[0], srtPos[1], 0, 0);
+    return dragRect;
   }
 
   /**
@@ -252,13 +498,13 @@ export class ObjectDetectionDrawer {
    * @param {number} scale Scale to set
    */
   setScale(scale) {
+    //! These codes have to be changed. It's not done yet.
     const [mouseX, mouseY] = this._mousePos;
     const [pivotX, pivotY] = [
       mouseX / this._canvas.width,
       mouseY / this._canvas.height,
     ];
 
-    console.log(this._stage);
     // Scales
     if (this._scale < scale) {
       const widthWeight =
@@ -332,8 +578,38 @@ export class ObjectDetectionDrawer {
   }
 
   /**
-   * Fills color to the data shape by index and update the variable 'isFilled' to true.
-   * If you don't have the data and the shape, you can use the index of lists.
+   * If you don't have the data and the shape, you can use the index of the shapes list.
+   * @param {number | data} paramA Data Index or Data
+   * @param {Shapes} paramB (Optional)
+   */
+  selectTagArea(paramA, paramB) {
+    let data = undefined;
+    let shapes = undefined;
+
+    if (paramB !== undefined) {
+      data = paramA;
+      shapes = paramB;
+    } else {
+      data = this._dataList[paramA];
+      shapes = this._shapesList[paramA];
+    }
+
+    data.selected = true;
+    this.fillTagArea(data, shapes);
+
+    // Create resizing points and render them
+    const points = this._createPointShapes(data.pos);
+    shapes.points = points;
+    for (const point of points) {
+      this._stage.addChild(point);
+    }
+
+    this.update();
+  }
+
+  /**
+   * Fills color inside the data shape by index and update the variable 'isFilled' to true.
+   * If you don't have the data and the shape, you can use the index of the shapes list.
    * @param {number | data} paramA Data Index or Data
    * @param {Shapes} paramB (Optional)
    */
@@ -363,7 +639,7 @@ export class ObjectDetectionDrawer {
 
   /**
    * Unfills the data shape by index and update the varaible 'isFilled' to false.
-   * If you don't have the data and the shape, you can use the index of lists.
+   * If you don't have the data and the shape, you can use the index of the shapes list.
    * @param {number | data} paramA Data Index or Data
    * @param {Shapes} paramB Shapes (Optional)
    */
@@ -460,7 +736,7 @@ export class ObjectDetectionDrawer {
    * @param {string} label Label Text
    */
   appendData(type, pos, color, label = '') {
-    const newData = { pos, color, isFilled: false };
+    const newData = { pos, color, isFilled: false, selected: false };
     const newShapes = {};
 
     // Create tag area shape
@@ -478,17 +754,23 @@ export class ObjectDetectionDrawer {
         .setStrokeStyle(2)
         .beginStroke(color)
         .beginFill(ObjectDetectionDrawer.EMPTY_AREA_COLOR) // Without it the mouse events wouldn't work
-        .drawPolygon(pos);
+        .drawPolygon(...pos);
     }
 
     // Attaches mouse events to the shape
+    newShapes.tagArea.on('mousedown', () => {
+      this._preventGlobalMouseEvent = true;
+    });
+
+    newShapes.tagArea.addEventListener('click', () => {
+      this.onShapeClick(newData, newShapes);
+    });
+
     newShapes.tagArea.addEventListener('mouseover', () => {
       if (this.onShapeMouseOver) this.onShapeMouseOver(newData, newShapes);
       if (this.cursorPointer && this._movable === 0) {
         document.body.style.setProperty('cursor', 'pointer');
       }
-      this.fillTagArea(newData, newShapes);
-      this.setLabelVisible(true, newData, newShapes);
       this._stage.update();
     });
 
@@ -497,8 +779,6 @@ export class ObjectDetectionDrawer {
       if (this.cursorPointer && this._movable === 0) {
         document.body.style.setProperty('cursor', 'default');
       }
-      this.unfillTagArea(newData, newShapes);
-      this.setLabelVisible(false, newData, newShapes);
       this._stage.update();
     });
 

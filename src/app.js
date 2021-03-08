@@ -90,8 +90,27 @@ const taggedData = [
 function demoCode() {
   const odDrawer = new ObjectDetectionDrawer('demo', './res/sample.jpg');
 
+  odDrawer.onShapeMouseOver = (data, shapes) => {
+    odDrawer.fillTagArea(data, shapes);
+    odDrawer.setLabelVisible(true, data, shapes);
+  };
+
+  odDrawer.onShapeMouseLeave = (data, shapes) => {
+    if (!data.selected) {
+      odDrawer.unfillTagArea(data, shapes);
+      odDrawer.setLabelVisible(false, data, shapes);
+    }
+  };
+
+  odDrawer.onShapeClick = (data, shapes) => {
+    this.selectTagArea(data, shapes);
+  };
+
+  odDrawer.onDefaultDraggingEnd = (e) => {
+    e.clear();
+  };
+
   for (const data of taggedData) {
-    1;
     odDrawer.appendData(data.type, data.pos, data.color, data.label);
   }
 
